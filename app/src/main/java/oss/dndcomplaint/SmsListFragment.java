@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.provider.Telephony;
 import android.view.View;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.text.SimpleDateFormat;
@@ -27,11 +28,10 @@ import androidx.loader.content.Loader;
 public class SmsListFragment extends ListFragment
         implements LoaderManager.LoaderCallbacks<Cursor> {
 
-    // This is the Adapter being used to display the list's data.
-    SimpleCursorAdapter adapter;
-
     private static final int REQUEST_CODE_SMS_PERMISSION = 1337;
     private static final long MILLIS_IN_A_DAY = 24*60*60*1000;
+    private static final SimpleDateFormat sdf =
+            new SimpleDateFormat("dd-MMM hh:mm a", Locale.getDefault());
 
     private static String[] smsDataProjection = {
             Telephony.Sms.ADDRESS,
@@ -40,12 +40,29 @@ public class SmsListFragment extends ListFragment
             Telephony.Sms._ID
     };
 
+    SimpleCursorAdapter adapter;
+
     private void init() {
         setEmptyText("SMS inbox empty");
+        sdf.setTimeZone(TimeZone.getDefault());
+
 //        setHasOptionsMenu(true);
         adapter = new SimpleCursorAdapter(getActivity(), R.layout.sms, null, smsDataProjection,
                 new int[] {R.id.sender, R.id.date, R.id.body}, 0);
 
+
+        adapter.setViewBinder(new SimpleCursorAdapter.ViewBinder() {
+            @Override
+            public boolean setViewValue(View view, Cursor cursor, int columnIndex) {
+                TextView tv = (TextView) view;
+                if (columnIndex != 1) {
+                    tv.setText(cursor.getString(columnIndex));
+                } else {
+                    tv.setText(SmsListFragment.sdf.format(SmsListFragment.this.extractDate(cursor)));
+                }
+                return true;
+            }
+        });
 
         setListAdapter(adapter);
         LoaderManager.getInstance(this).initLoader(0, null, this);
@@ -91,13 +108,13 @@ public class SmsListFragment extends ListFragment
 //        item.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
 //    }
 
+    private Date extractDate(Cursor c) {
+        long milliTimeStamp = Long.parseLong(c.getString(1));
+        return new Date(milliTimeStamp);
+    }
+
     @Override public void onListItemClick(ListView l, View v, int position, long id) {
         Cursor c = (Cursor)adapter.getItem(position);
-        long milliTimeStamp = Long.parseLong(c.getString(1));
-        if (System.currentTimeMillis() - milliTimeStamp > 3*MILLIS_IN_A_DAY) {
-            Toast.makeText(getActivity(), "This message is too old", Toast.LENGTH_LONG).show();
-            return;
-        }
 
         Intent intent = new Intent(Intent.ACTION_SENDTO);
         intent.setData(Uri.parse("mailto:"));
@@ -105,32 +122,29 @@ public class SmsListFragment extends ListFragment
         intent.putExtra(Intent.EXTRA_EMAIL, new String[]{"1909@airtel.com"});
         intent.putExtra(Intent.EXTRA_SUBJECT, "Unsolicited SMS complaint");
 
-        Date date = new Date(milliTimeStamp);
-        SimpleDateFormat sdf = new SimpleDateFormat("dd-MMM hh:mm a", Locale.getDefault());
-        sdf.setTimeZone(TimeZone.getDefault());
-        StringBuilder sb = new StringBuilder();
-        sb.append("This is a complaint for receiving unsolicited sms on my number ");
-        sb.append("\n\nDetails:\n\n");
-        sb.append("Sender:\n");
-        sb.append(c.getString(0));
-        sb.append("\n\nDate & Time: ");
-        sb.append(sdf.format(date));
-        sb.append("\n\nMessageBody:\n");
-        sb.append(c.getString(2));
-        intent.putExtra(Intent.EXTRA_TEXT, sb.toString());
+        String emailBody = "This is a complaint for receiving unsolicited sms on my number " +
+                "\n\nDetails:\n\n" +
+                "Sender:\n" +
+                c.getString(0) +
+                "\n\nDate & Time: " +
+                sdf.format(extractDate(c)) +
+                "\n\nMessageBody:\n" +
+                c.getString(2);
+        intent.putExtra(Intent.EXTRA_TEXT, emailBody);
         if (intent.resolveActivity(getActivity().getPackageManager()) != null) {
-            getActivity().startActivity(intent);
+            startActivity(intent);
         } else {
             Toast.makeText(getActivity(), "No email app found!", Toast.LENGTH_LONG).show();
         }
     }
 
     public Loader<Cursor> onCreateLoader(int id, Bundle args) {
+        long cutoff = System.currentTimeMillis() - 3*MILLIS_IN_A_DAY;
         return new CursorLoader(getActivity(),
                 Telephony.Sms.CONTENT_URI,
                 smsDataProjection,
-                null,
-                null,
+                "date > ?",
+                new String[]{Long.toString(cutoff)},
                 Telephony.Sms.DEFAULT_SORT_ORDER);
     }
 
